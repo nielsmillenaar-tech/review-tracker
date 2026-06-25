@@ -1,0 +1,67 @@
+name: Update review dashboard
+
+# Runs every day at 07:00 UTC, and whenever you click "Run workflow" manually.
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      inspect:
+        description: "Print redacted data structure to the log (for first-time parser check)"
+        type: boolean
+        default: false
+
+# Allow the job to commit history.csv/index.html back and deploy Pages.
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: review-dashboard
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate dashboard
+        env:
+          HOSPITABLE_PAT: ${{ secrets.HOSPITABLE_PAT }}
+          HOSPITABLE_INSPECT: ${{ inputs.inspect && '1' || '0' }}
+        run: python review_tracker.py --out index.html --history history.csv
+
+      - name: Commit refreshed dashboard and history
+        run: |
+          git config user.name "review-tracker-bot"
+          git config user.email "actions@github.com"
+          git add index.html history.csv
+          git commit -m "Refresh dashboard ($(date -u +%Y-%m-%d))" || echo "No changes to commit"
+          git push
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
