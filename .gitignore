@@ -1,0 +1,6 @@
+# Local preview output (the cloud run generates index.html instead)
+dashboard.html
+
+# Never commit secrets
+.env
+*.token
