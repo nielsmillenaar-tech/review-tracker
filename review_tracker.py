@@ -140,9 +140,21 @@ def fetch_live():
             review = res.get("review")
             if not review:
                 continue
-            pid = res.get("property_id") or res.get("property_uuid")
-            if pid in properties:
-                properties[pid]["reviews"].append(_normalize_review(review, res))
+            # Reservations link to their property via the included properties array.
+            props_arr = res.get("properties") or []
+            if not props_arr:
+                continue
+            prop = props_arr[0]
+            pid = prop.get("id")
+            if not pid:
+                continue
+            if pid not in properties:
+                properties[pid] = {
+                    "id": pid,
+                    "name": prop.get("public_name") or prop.get("name") or "Listing",
+                    "reviews": [],
+                }
+            properties[pid]["reviews"].append(_normalize_review(review, res))
         meta = data.get("meta", {})
         if not meta or page >= meta.get("last_page", page):
             break
@@ -167,36 +179,48 @@ def _mask_guest(guest):
     return f"{first} {last[0]}." if last else first
 
 
+def _norm_rating(v):
+    """Normalize a rating to a 5-point scale (Booking 1-10 -> /2, 0-100 -> /20)."""
+    if v is None:
+        return None
+    v = float(v)
+    if v > 10:
+        v = v / 20.0
+    elif v > 5:
+        v = v / 2.0
+    return round(v, 1)
+
+
 def _normalize_review(review, reservation):
-    """Map an API review object into the simple shape the dashboard expects."""
+    """Map a Hospitable v2 review object into the simple shape the dashboard expects.
+
+    Real structure (confirmed via inspect):
+      review.public = {rating, rating_platform_original, review, response}
+      review.private.detailed_ratings = [{type, rating, comment}, ...]
+      review.reviewed_at, review.platform
+    """
     guest = (reservation or {}).get("guest", {}) or {}
-    # Hospitable exposes category sub-ratings under a few possible shapes;
-    # pull whatever is present and normalize to our label keys.
-    raw_cats = review.get("categories") or review.get("category_ratings") or {}
+    public = review.get("public") or {}
+    private = review.get("private") or {}
+
     cats = {}
-    if isinstance(raw_cats, dict):
-        for key, val in raw_cats.items():
-            k = key.lower().replace("_", "").replace("-", "")
-            for label in CATEGORY_LABELS:
-                if label.replace("_", "") in k:
-                    if isinstance(val, dict):
-                        val = val.get("rating") or val.get("value")
-                    if val is not None:
-                        cats[label] = round(float(val), 1)
-    elif isinstance(raw_cats, list):
-        for item in raw_cats:
-            name = (item.get("category") or item.get("name") or "").lower()
-            val = item.get("rating") or item.get("value")
-            for label in CATEGORY_LABELS:
-                if label in name and val is not None:
-                    cats[label] = round(float(val), 1)
+    for item in (private.get("detailed_ratings") or []):
+        rtype = (item.get("type") or "").lower().replace("_", "").replace("-", "")
+        val = item.get("rating")
+        if val is None:
+            continue
+        for label in CATEGORY_LABELS:
+            if label.replace("_", "") in rtype:
+                cats[label] = _norm_rating(val)
+                break
+
     return {
-        "date": review.get("created_at") or review.get("submitted_at") or "",
+        "date": review.get("reviewed_at") or review.get("created_at") or "",
         "guest": _mask_guest(guest),
-        "rating": review.get("rating") or review.get("overall_rating"),
-        "text": review.get("public_review") or review.get("comments") or review.get("text") or "",
-        "channel": (reservation or {}).get("platform") or review.get("channel") or "airbnb",
-        "responded": bool(review.get("response") or review.get("host_reply")),
+        "rating": _norm_rating(public.get("rating")),
+        "text": public.get("review") or "",
+        "channel": review.get("platform") or (reservation or {}).get("platform") or "airbnb",
+        "responded": bool(public.get("response")),
         "categories": cats,
     }
 
