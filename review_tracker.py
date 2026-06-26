@@ -41,6 +41,15 @@ LOW_RATING_THRESHOLD = 4.0
 DROP_THRESHOLD = 0.1
 # How many recent reviews to headline per property.
 RECENT_COUNT = 3
+# Inactive listings to hide. Match by exact name, or by id (for duplicates).
+EXCLUDE_NAMES = {
+    "cozy & large apartment near the american embassy",
+    "BOQUERON 2",
+    "Cuarto 3 Tunco",
+}
+EXCLUDE_IDS = {
+    "38e63710-d31f-4860-9264-d67ae4caad34",  # BARBAZAN (4.33, last review Apr 2026)
+}
 # Airbnb sub-rating categories (label -> short display name).
 CATEGORY_LABELS = {
     "cleanliness": "Clean",
@@ -531,6 +540,8 @@ def main():
     args = ap.parse_args()
 
     props = fetch_sample() if args.sample else fetch_live()
+    props = [p for p in props
+             if p["id"] not in EXCLUDE_IDS and p["name"] not in EXCLUDE_NAMES]
     summaries = [summarize(p) for p in props]
     render_dashboard(summaries, args.out)
     if not args.no_history:
